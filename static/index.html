@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>口述史事件时间线核对</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>口述史事件时间线核对</h1>
+      <p class="subtitle">
+        每行输入 <code>事件甲,事件乙,最少分钟,最多分钟</code>，表示
+        <strong>事件乙比事件甲晚</strong>发生的时间差区间（分钟，可填负数表示乙更早）。
+        系统联立全部区间：若互相矛盾，给出由<strong>原始行号与上下界</strong>构成的闭合矛盾链，
+        并可进一步给出<strong>冲突单行修订建议</strong>——只放宽某一行的一个端点即可消除矛盾的最小改动；
+        否则给出以最早事件为第 0 分钟的可行时间线。
+        还可在区间旁粘贴<strong>绝对时间锚点</strong>（<code>事件名,YYYY-MM-DD HH:MM</code>，同一无时区本地时间）：
+        每个锚点作为事件相对统一零点的等式与区间一起联立，冲突时给出含<strong>区间行号与锚点行号</strong>的闭合矛盾链；
+        可解时只为<strong>与锚点连通</strong>的事件显示绝对日期时刻，其余标为<strong>“未定位”</strong>。
+        此外可任选一条原始行做<strong>约束冗余核对</strong>：删去该行后，检验其余叙述是否仍必然满足它的时间差区间；
+        也可把<strong>基准版与修订版</strong>两版文本分别粘贴做<strong>两版比较</strong>：按事件名对齐，给出新增、删除事件与共同事件的分钟变化及修订行证据。
+        还可在区间之外输入<strong>互斥说法候选组</strong>（每行 <code>区间A | 区间B</code>，两条说法只能选一条，最多 6 行）做<strong>先后查询</strong>：
+        后端枚举全部组合与共同约束联立、排除冲突组合，合并各可行组合的时间差最紧界后，判断甲是否始终先于/后于乙。
+        当几句叙述实在无法同时成立时，还可使用<strong>最少撤回</strong>（最多 10 条非空约束）：
+        后端按撤回行数递增搜索，给出所有<strong>撤回行数最少</strong>的原始行号组合，
+        每个方案展示剩余约束的<strong>一条可行时间线</strong>；原文已可行时返回零撤回方案，撤回全部行时显示空时间线。
+        同一事件被记成多个名字时，还可在区间旁逐行填写<strong>事件别名</strong>（<code>事件名,同一事件的另一名称</code>）做<strong>别名归并核对</strong>：
+        后端按传递关系把名称归为同一事件，再用归并后的节点联立原区间（<strong>同组内的区间也参与判定</strong>）；
+        归并造成矛盾时给出保留<strong>原始区间行号与别名组</strong>的冲突说明，可解时展示按统一事件归并的时间线及每组原名称。
+        若还要核对“按所述顺序能不能赶得及”，可逐行填写<strong>事件地点</strong>（<code>事件,地点</code>）、
+        有向<strong>通行路段</strong>（<code>起点,终点,分钟</code>）与按发生顺序排列的<strong>行程事件</strong>做<strong>行程可达性核对</strong>：
+        后端对每对相邻事件求地点网络<strong>最短通行时间</strong>（同地点零分钟），把通行下界与本页时间差区间联立；
+        无路可达时指出对应事件段，时间冲突时给出含<strong>原区间行号、事件段及其最短路线</strong>的矛盾依据，
+        可行时列出各段最短路线、所需分钟与一条满足全部约束的时间线。
+        若要在保持若干事件先后顺序的前提下尽量拉开节奏，还可在<strong>有序事件最大统一间隔</strong>区
+        按先后顺序逐行填写至少两个<strong>已在区间中出现</strong>的事件名：
+        后端求最大的非负整数 g，使<strong>每对相邻所选事件至少相隔 g 分钟</strong>且全部原区间同时成立，
+        返回 g 与一条达到该间隔的完整可行时间线；顺序连 g=0 都无法保持时明确提示<strong>顺序冲突</strong>，
+        g 没有有限上限时显示<strong>“无上限”</strong>并给出 g=0 的可行时间线。
+      </p>
+    </header>
+
+    <section class="input-area">
+      <label for="input"><strong>事件区间（每行一条）</strong></label>
+      <textarea id="input" rows="10" spellcheck="false"
+        placeholder="起床,吃饭,30,120&#10;吃饭,开会,60,180&#10;开会,起床,-200,-150"></textarea>
+      <div class="button-row">
+        <button id="btn-solve" class="primary">联立核对</button>
+        <button id="btn-example-ok">填入可行示例</button>
+        <button id="btn-example-conflict">填入矛盾示例</button>
+        <button id="btn-clear" class="ghost">清空</button>
+      </div>
+    </section>
+
+    <section class="input-area">
+      <label for="alias-input"><strong>事件别名（每行一条）</strong></label>
+      <p class="muted" style="margin-top:0">
+        每行 <code>事件名,同一事件的另一名称</code>，表示两个名称指同一事件；后端按<strong>传递关系</strong>归并
+        （A=B、B=C ⇒ A、B、C 同组），每组取区间文本中最先出现的名称作<strong>统一事件名</strong>，
+        再用归并后的节点联立上方“事件区间”——<strong>同组内的区间也参与判定</strong>（归并后要求 0 落在该行区间内）。
+        归并造成矛盾时给出保留<strong>原始区间行号</strong>与<strong>别名组</strong>（每组原名称）的冲突说明；
+        可解时展示按统一事件归并的时间线及每组原名称。可直接使用上方现有区间文本发起核对。
+      </p>
+      <textarea id="alias-input" rows="4" spellcheck="false"
+        placeholder="洗漱,盥洗&#10;开会,晨会"></textarea>
+      <div class="button-row">
+        <button id="btn-alias" class="primary">别名归并核对</button>
+        <button id="btn-alias-example-ok">填入归并可行示例</button>
+        <button id="btn-alias-example-conflict">填入归并矛盾示例</button>
+        <button id="btn-alias-clear" class="ghost">清空别名</button>
+      </div>
+    </section>
+
+    <section id="alias-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label><strong>行程可达性核对</strong></label>
+      <p class="muted" style="margin-top:0">
+        继续使用上方“事件区间”文本中的<strong>时间差区间</strong>（可留空，表示只核对通行顺序）。
+        另逐行填写<strong>事件地点</strong> <code>事件,地点</code>、有向<strong>通行路段</strong>
+        <code>起点,终点,分钟</code>（单向通行、非负分钟，同一起终点多行取最短），并在
+        <strong>行程顺序</strong>框中<strong>按发生顺序每行一个事件名</strong>（互不相同）。
+        后端对每对相邻事件求地点网络中的<strong>最短通行时间</strong>（<strong>同地点按零分钟</strong>），
+        把“后一事件 − 前一事件 ≥ 最短通行”作为下界与原区间联立：<strong>无路可达</strong>时指出对应事件段；
+        <strong>时间冲突</strong>时给出含原区间行号、事件段及其最短路线的矛盾依据；<strong>可行</strong>时列出
+        各段最短路线、所需分钟与一条满足全部约束的时间线。
+      </p>
+      <div class="itinerary-grid">
+        <div>
+          <label for="itinerary-places">事件地点（每行 <code>事件,地点</code>）</label>
+          <textarea id="itinerary-places" class="itinerary-input" rows="7" spellcheck="false"
+            placeholder="起床,家&#10;早饭,餐馆&#10;开会,公司"></textarea>
+        </div>
+        <div>
+          <label for="itinerary-routes">通行路段（每行 <code>起点,终点,分钟</code>，有向）</label>
+          <textarea id="itinerary-routes" class="itinerary-input" rows="7" spellcheck="false"
+            placeholder="家,餐馆,15&#10;餐馆,公司,25&#10;家,公司,60"></textarea>
+        </div>
+        <div>
+          <label for="itinerary-order">行程顺序（每行一个事件，按发生先后）</label>
+          <textarea id="itinerary-order" class="itinerary-input" rows="7" spellcheck="false"
+            placeholder="起床&#10;早饭&#10;开会"></textarea>
+        </div>
+      </div>
+      <div class="button-row">
+        <button id="btn-itinerary" class="primary">行程可达性核对</button>
+        <button id="btn-itinerary-example-ok">填入可行行程示例</button>
+        <button id="btn-itinerary-example-conflict">填入时间冲突示例</button>
+        <button id="btn-itinerary-example-unreach">填入无路可达示例</button>
+        <button id="btn-itinerary-clear" class="ghost">清空行程</button>
+      </div>
+    </section>
+
+    <section id="itinerary-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label for="maxgap-order"><strong>有序事件最大统一间隔</strong></label>
+      <p class="muted" style="margin-top:0">
+        沿用上方“事件区间”文本；此处<strong>按希望保持的先后顺序</strong>逐行填写事件名
+        （每行一个，<strong>至少两个、互不相同、已在区间中出现</strong>）。
+        后端求最大的非负整数 <strong>g</strong>：在全部原区间仍然成立的前提下，
+        <strong>每对相邻所选事件至少相隔 g 分钟</strong>；返回 g 与一条达到该间隔的
+        <strong>完整可行时间线</strong>（最早事件为第 0 分钟）。
+        原区间可行但所选顺序<strong>连 g=0 都无法保持</strong>时，明确提示<strong>顺序冲突</strong>
+        并给出含顺序间隔环节的闭合矛盾链；g <strong>没有有限上限</strong>时显示“无上限”，
+        并给出 g=0（只保持先后顺序）的可行时间线。
+        原区间语法错误或自身矛盾时，沿用现有错误或闭合矛盾链。
+      </p>
+      <textarea id="maxgap-order" rows="4" spellcheck="false"
+        placeholder="起床&#10;早饭&#10;开会"></textarea>
+      <div class="button-row">
+        <button id="btn-maxgap" class="primary">求最大统一间隔</button>
+        <button id="btn-maxgap-example-ok">填入有界示例</button>
+        <button id="btn-maxgap-example-unbounded">填入无上限示例</button>
+        <button id="btn-maxgap-example-conflict">填入顺序冲突示例</button>
+        <button id="btn-maxgap-clear" class="ghost">清空顺序</button>
+      </div>
+    </section>
+
+    <section id="maxgap-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label for="anchor-input"><strong>绝对时间锚点（每行一条）</strong></label>
+      <p class="muted" style="margin-top:0">
+        每行 <code>事件名,YYYY-MM-DD HH:MM</code>，把该事件钉在指定绝对时刻（同一无时区本地时间，精确到分钟）。
+        后端把每个锚点作为<strong>事件相对统一零点的等式</strong>，与上方区间一起联立：
+        锚点与区间或锚点彼此（含<strong>同名锚点重复</strong>）冲突时，给出含<strong>区间行号、锚点行号与所用界值</strong>的闭合矛盾链；
+        可解时只显示<strong>与锚点连通</strong>事件的绝对日期时刻（被约束钉死的精确点或范围），
+        其余事件标为<strong>“未定位”</strong>——不把任何任意平移量当作真实日期。
+      </p>
+      <textarea id="anchor-input" rows="5" spellcheck="false"
+        placeholder="起床,2024-03-05 06:30&#10;开会,2024-03-05 09:00"></textarea>
+      <div class="button-row">
+        <button id="btn-anchor" class="primary">锚定求解</button>
+        <button id="btn-anchor-example">填入锚点示例</button>
+        <button id="btn-anchor-clear" class="ghost">清空锚点</button>
+      </div>
+    </section>
+
+    <section id="anchor-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label for="redundancy-line"><strong>约束冗余核对</strong></label>
+      <p class="muted" style="margin-top:0">
+        从上方文本中选一条原始行：后端删去该行对应的上、下界约束，求其余约束对这两个事件时间差的
+        <strong>最紧下界与上界</strong>（推不出的端点标为无界，并给出有界端点的推导路径、原始行号与所用界值）。
+        仅当推导区间完全落在所选行区间内时判为<strong>“可删”</strong>，否则标为<strong>“必要”</strong>。
+      </p>
+      <div class="redundancy-row">
+        <select id="redundancy-line"></select>
+        <button id="btn-redundancy" class="primary">核对所选行</button>
+      </div>
+    </section>
+
+    <section id="redundancy-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label><strong>冲突单行修订建议</strong></label>
+      <p class="muted" style="margin-top:0">
+        当上方文本语法有效但联立矛盾时，后端逐行暂时移除该行的上下界：其余行仍矛盾的行排除；
+        其余可解时求这两个事件时间差的<strong>最紧可行区间</strong>，只放宽该行<strong>一个端点</strong>至首次相交的整数分钟，
+        给出<strong>最小改动量、替换后的整行</strong>，以及迫使该端点移动的<strong>原始行号与界值推导链</strong>。
+        建议按改动分钟数、原始行号排序；点击<strong>“填入此建议”</strong>可把替换后的整行写回上方文本框（编辑后旧建议自动清空）。
+      </p>
+      <div class="button-row" style="margin-top:0">
+        <button id="btn-repair" class="primary">获取修订建议</button>
+      </div>
+    </section>
+
+    <section id="repair-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label><strong>两版比较（基准文本 / 修订文本）</strong></label>
+      <p class="muted" style="margin-top:0">
+        分别粘贴<strong>基准版</strong>与<strong>修订版</strong>区间文本，后端各自独立校验、独立联立后按事件名对齐：
+        标出共同事件的基准/修订时刻与<strong>变化分钟数</strong>，并给出<strong>导致变化的修订行号</strong>及其推导路径；
+        同时列出修订版<strong>新增</strong>、<strong>删除</strong>的事件。任一版校验无效或存在矛盾时，分别显示该版错误或闭合矛盾链，不生成差异结论。
+      </p>
+      <div class="compare-grid">
+        <div>
+          <label for="compare-base">基准文本</label>
+          <textarea id="compare-base" class="compare-input" rows="8" spellcheck="false"
+            placeholder="起床,洗漱,10,30&#10;洗漱,早饭,15,45&#10;…"></textarea>
+        </div>
+        <div>
+          <label for="compare-revised">修订文本</label>
+          <textarea id="compare-revised" class="compare-input" rows="8" spellcheck="false"
+            placeholder="起床,洗漱,15,35&#10;洗漱,早饭,20,50&#10;…"></textarea>
+        </div>
+      </div>
+      <div class="button-row">
+        <button id="btn-compare" class="primary">比较两版</button>
+        <button id="btn-compare-example">填入两版示例</button>
+        <button id="btn-compare-clear" class="ghost">清空两版</button>
+      </div>
+    </section>
+
+    <section id="compare-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label><strong>互斥说法下的先后查询</strong></label>
+      <p class="muted" style="margin-top:0">
+        上方“事件区间”文本作为<strong>共同约束</strong>；此处每行输入一组互斥说法
+        <code>区间A | 区间B</code>（两侧均沿用 <code>事件甲,事件乙,最少分钟,最多分钟</code> 格式，最多 6 行），
+        表示该行的两条说法<strong>只能选一条</strong>。后端枚举全部“每组选一侧”的组合并与共同约束联立，
+        <strong>排除冲突组合</strong>；对每个可行组合求 <strong>t(乙) − t(甲)</strong> 的最紧上下界，
+        再跨组合取<strong>最小下界、最大上界</strong>（任一组合对应端无界则合并端无界）。
+        合并下界 ≥ 1 分钟判<strong>“甲始终先于乙”</strong>，合并上界 ≤ −1 分钟判<strong>“甲始终后于乙”</strong>，
+        否则判<strong>“不确定”</strong>；无可行组合时不作先后判断。查询的甲、乙须出现在共同约束中。
+      </p>
+      <div class="precedence-query-row">
+        <label for="prec-a">查询事件甲</label>
+        <input id="prec-a" type="text" placeholder="如：起床" />
+        <label for="prec-b">查询事件乙</label>
+        <input id="prec-b" type="text" placeholder="如：开会" />
+      </div>
+      <textarea id="prec-groups" rows="6" spellcheck="false"
+        placeholder="开会,起床,-400,-300 | 起床,开会,80,240&#10;早饭,午休,5,15 | 出门,午休,5,15"></textarea>
+      <div class="button-row">
+        <button id="btn-precedence" class="primary">先后查询</button>
+        <button id="btn-precedence-example">填入互斥示例</button>
+        <button id="btn-precedence-clear" class="ghost">清空候选组</button>
+      </div>
+    </section>
+
+    <section id="precedence-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label><strong>最少撤回</strong></label>
+      <p class="muted" style="margin-top:0">
+        直接使用上方“事件区间”文本（<strong>最多 10 条非空行</strong>，空行跳过、行号按原始文本计算）。
+        后端复用同一套区间解析与联立求解：当原文互相矛盾时，按<strong>撤回行数从少到多</strong>枚举原始行号组合，
+        返回全部使剩余约束可行的<strong>最少撤回</strong>组合，每个方案展示剩余约束的<strong>一条可行时间线</strong>
+        （以最早事件为第 0 分钟）。<strong>空约束集视为可行</strong>：撤回全部行时显示空时间线；原文已可行时返回零撤回方案。
+        语法错误或超过 10 条非空行会给出明确提示。
+      </p>
+      <div class="button-row" style="margin-top:0">
+        <button id="btn-withdraw" class="primary">最少撤回搜索</button>
+        <button id="btn-withdraw-example">填入撤回示例</button>
+      </div>
+    </section>
+
+    <section id="withdraw-result" aria-live="polite"></section>
+
+    <section id="result" aria-live="polite"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
