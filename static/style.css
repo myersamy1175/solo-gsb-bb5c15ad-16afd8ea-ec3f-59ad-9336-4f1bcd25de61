@@ -330,6 +330,9 @@ tr.combo-conflict td { color: var(--muted); }
 /* 顺序间隔在矛盾链中的标签配色 */
 .tag.order { background: #e6eef9; color: #2b5d8a; }
 
+/* 记录时钟等式在矛盾链中的标签配色 */
+.tag.clock { background: #f3e8f2; color: #7a3570; }
+
 /* 事件段路线 */
 .route-chain {
   display: flex;

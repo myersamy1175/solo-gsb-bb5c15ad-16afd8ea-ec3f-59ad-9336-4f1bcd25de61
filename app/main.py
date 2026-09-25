@@ -2,7 +2,7 @@
 /api/compare 两版比较、/api/repair 冲突单行修订建议、/api/anchor 绝对时间锚定、
 /api/precedence 互斥说法下的先后查询、/api/withdrawals 最少撤回、
 /api/aliases 事件别名归并核对、/api/itinerary 行程可达性核对、
-/api/max-gap 有序事件最大统一间隔查询接口。"""
+/api/max-gap 有序事件最大统一间隔查询、/api/clock-align 记录时钟对齐接口。"""
 
 from __future__ import annotations
 
@@ -19,12 +19,13 @@ from .solver import (
     solve,
     solve_aliases,
     solve_anchored,
+    solve_clock_alignment,
     solve_max_gap,
     solve_precedence,
     suggest_repairs,
 )
 
-app = FastAPI(title="口述史事件时间线核对", version="1.9.0")
+app = FastAPI(title="口述史事件时间线核对", version="1.10.0")
 
 
 class SolveRequest(BaseModel):
@@ -68,6 +69,11 @@ class ItineraryRequest(BaseModel):
 class MaxGapRequest(BaseModel):
     text: str = ""
     order: str = ""
+
+
+class ClockAlignRequest(BaseModel):
+    text: str = ""
+    records: str = ""
 
 
 @app.get("/api/health")
@@ -142,6 +148,15 @@ def api_max_gap(req: MaxGapRequest) -> dict:
     # 同时成立，返回 g 与一条达到该间隔的完整可行时间线；顺序连 g=0 都无法保持时返回
     # 含顺序间隔环节的闭合矛盾链，g 无有限上限时返回“无上限”与 g=0 的可行时间线
     return solve_max_gap(req.text or "", req.order or "")
+
+
+@app.post("/api/clock-align")
+def api_clock_align(req: ClockAlignRequest) -> dict:
+    # 记录时钟对齐：沿用首页事件区间，记录文本逐行“来源,事件,本地分钟”；首个来源为参考时钟，
+    # 偏移固定为 0，同一来源共用一个整数分钟偏移（事件真实分钟 = 本地分钟 + 偏移）。
+    # 记录等式与区间共同联立：冲突时返回含区间行号或记录行号、所用界值的闭合冲突链；
+    # 可解时给出各来源相对参考时钟的最紧偏移上下界，未与参考来源连通的来源标为“未定位”
+    return solve_clock_alignment(req.text or "", req.records or "")
 
 
 @app.get("/")

@@ -39,6 +39,10 @@
         后端求最大的非负整数 g，使<strong>每对相邻所选事件至少相隔 g 分钟</strong>且全部原区间同时成立，
         返回 g 与一条达到该间隔的完整可行时间线；顺序连 g=0 都无法保持时明确提示<strong>顺序冲突</strong>，
         g 没有有限上限时显示<strong>“无上限”</strong>并给出 g=0 的可行时间线。
+        若各份口述记录来自走时不一的时钟，还可逐行填写<strong>时钟记录</strong>（<code>来源,事件,本地分钟</code>）做<strong>记录时钟对齐</strong>：
+        <strong>首个来源为参考时钟</strong>（偏移固定为 0），同一来源共用一个整数分钟偏移（事件真实分钟 = 本地分钟 + 偏移），
+        记录等式与区间共同联立；矛盾时给出含<strong>区间行号或记录行号、所用界值</strong>的闭合冲突链；
+        可解时给出各来源相对参考时钟的<strong>最紧偏移上下界</strong>，未与参考来源连通的来源标为<strong>“未定位”</strong>，不显示伪精确偏移。
       </p>
     </header>
 
@@ -140,6 +144,30 @@
     </section>
 
     <section id="maxgap-result" aria-live="polite"></section>
+
+    <section class="input-area">
+      <label for="clock-records"><strong>记录时钟对齐（每行一条记录）</strong></label>
+      <p class="muted" style="margin-top:0">
+        沿用上方“事件区间”文本（可留空，表示只对齐记录）；此处逐行填写
+        <code>来源,事件,本地分钟</code>（本地分钟为整数，可负）。
+        <strong>首个出现的来源为参考时钟</strong>，其偏移固定为 <strong>0</strong>；
+        同一来源的全部记录共用一个整数分钟偏移，<strong>事件真实分钟 = 本地分钟 + 偏移</strong>。
+        后端把每条记录作为等式与区间共同联立（复用同一套差分约束 Bellman-Ford）：
+        矛盾时给出含<strong>区间行号或记录行号、所用界值（本地分钟）</strong>的闭合冲突链；
+        可解时给出各来源相对参考时钟的<strong>最紧偏移上下界</strong>（精确点或范围），
+        <strong>未与参考来源连通</strong>的来源标为<strong>“未定位”</strong>——不显示伪精确偏移。
+      </p>
+      <textarea id="clock-records" rows="5" spellcheck="false"
+        placeholder="老张,开会,100&#10;老李,开会,120&#10;电台,午饭,200"></textarea>
+      <div class="button-row">
+        <button id="btn-clock" class="primary">时钟对齐求解</button>
+        <button id="btn-clock-example-ok">填入对齐示例</button>
+        <button id="btn-clock-example-conflict">填入对齐矛盾示例</button>
+        <button id="btn-clock-clear" class="ghost">清空记录</button>
+      </div>
+    </section>
+
+    <section id="clock-result" aria-live="polite"></section>
 
     <section class="input-area">
       <label for="anchor-input"><strong>绝对时间锚点（每行一条）</strong></label>

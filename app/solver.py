@@ -80,6 +80,17 @@ _derive_bound 求 t(乙) − t(甲) 的最紧下界/上界（推不出的端点�
 顺序间隔环节（标注相邻对序号）的闭合矛盾链；没有任何间隔边落在环上（原区间对这些
 间隔给不出上界）时 g 无有限上限，给出 g=0 的可行时间线；否则先指数放大再二分求出
 最大的可行整数 g，返回 g 与一条达到该间隔、平移到最早事件为第 0 分钟的完整可行时间线。
+
+记录时钟对齐（solve_clock_alignment）：沿用首页事件区间，记录文本逐行“来源,事件,本地分钟”。
+首个出现的来源为参考时钟，其偏移固定为 0；同一来源的全部记录共用一个整数分钟偏移
+o(来源)，每条记录是等式 t(事件) = 本地分钟 + o(来源)，写成一对等式边
+（时钟节点 -> 事件 权 m、事件 -> 时钟节点 权 -m），与区间边复用同一套差分约束
+Bellman-Ford 联立。时钟节点用带内部前缀的独立节点名，避免与同名事件混淆。偏移只以
+差值形式出现，无需额外钉零即可检出全部负环；矛盾时闭合冲突链同时标注区间行号、
+记录行号与所用界值（本地分钟）。可解时以参考时钟节点为源跑前/反向单源最短路，
+求每个来源相对参考时钟的最紧偏移下界/上界（参考来源恒为 [0,0]）：两端都有界
+（与参考来源连通）才给偏移（相等为精确点，否则为范围），未连通来源标为“未定位”，
+不显示伪精确偏移；事件真实分钟范围与逐条记录的核对结果同法给出。
 """
 
 from __future__ import annotations
@@ -98,13 +109,38 @@ ZERO_DT = datetime(1, 1, 1, 0, 0)
 ZERO_NODE = "\x00zero"
 ZERO_DISPLAY = "统一零点"
 
+# 记录时钟对齐：时钟偏移节点的内部名前缀与对外显示名前缀。
+# 内部名以 \x00 开头，来源名即使与事件同名也不会与事件节点混淆；
+# 对外显示映射为“时钟(来源名)”。
+CLOCK_NODE_PREFIX = "\x00clock:"
+CLOCK_DISPLAY_PREFIX = "时钟("
+
 # 锚点日期时间格式：YYYY-MM-DD HH:MM（允许任意空白分隔日期与时刻）
 _ANCHOR_DT_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$")
 
 
 def _display_name(name: str) -> str:
-    """图中内部节点名转对外显示名（零点节点显示为“统一零点”）。"""
-    return ZERO_DISPLAY if name == ZERO_NODE else name
+    """图中内部节点名转对外显示名（零点节点显示为“统一零点”，时钟节点显示为“时钟(来源)”）。"""
+    if name == ZERO_NODE:
+        return ZERO_DISPLAY
+    if name.startswith(CLOCK_NODE_PREFIX):
+        return f"{CLOCK_DISPLAY_PREFIX}{name[len(CLOCK_NODE_PREFIX):]})"
+    return name
+
+
+def _is_clock_node(name: str) -> bool:
+    """该图中节点是否为记录时钟的偏移节点。"""
+    return name.startswith(CLOCK_NODE_PREFIX)
+
+
+def _clock_node(source: str) -> str:
+    """来源名转该来源时钟偏移的内部节点名。"""
+    return f"{CLOCK_NODE_PREFIX}{source}"
+
+
+def _clock_source(name: str) -> str | None:
+    """时钟内部节点名反解出来源名；非时钟节点返回 None。"""
+    return name[len(CLOCK_NODE_PREFIX):] if name.startswith(CLOCK_NODE_PREFIX) else None
 
 
 @dataclass(frozen=True)
@@ -122,10 +158,18 @@ class Edge:
     v: int
     w: int
     line: int
-    kind: str  # "upper"（上界边）、"lower"（下界边）、"anchor"（锚点等式边）、"travel"（通行下界边）或 "order"（顺序间隔边）
-    bound: int  # 原始行中的界值（上界为 high，下界为 low；锚点边为相对零点的分钟数）
-    source: str = "interval"  # "interval"（区间行）或 "anchor"（锚点行）
+    kind: str  # "upper"（上界边）、"lower"（下界边）、"anchor"（锚点等式边）、"travel"（通行下界边）、"order"（顺序间隔边）或 "clock"（记录时钟等式边）
+    bound: int  # 原始行中的界值（上界为 high，下界为 low；锚点/记录等式边为相对量分钟数）
+    source: str = "interval"  # "interval"（区间行）、"anchor"（锚点行）、"travel"、"order" 或 "clock"（记录行）
     label: str = ""  # 锚点边展示用的日期时刻文本（YYYY-MM-DD HH:MM）
+
+
+@dataclass(frozen=True)
+class ClockRecord:
+    line: int  # 记录文本的原始行号
+    source: str
+    event: str
+    local: int  # 该来源时钟上读到的本地分钟
 
 
 @dataclass(frozen=True)
@@ -234,7 +278,7 @@ def parse_text(text: str) -> tuple[list[Row], list[dict]]:
 
 
 def _edge_step(names: list[str], e: Edge) -> dict:
-    """把一条约束边还原为可读步骤：来源（区间行/锚点行）、原始行号、方向、所用界与界值。"""
+    """把一条约束边还原为可读步骤：来源（区间行/锚点行/记录行）、原始行号、方向、所用界与界值。"""
     if e.kind == "anchor":
         # 锚点等式边：ZERO->事件 权 M（不晚于锚定时刻）或 事件->ZERO 权 -M（不早于锚定时刻）
         if names[e.u] == ZERO_NODE:
@@ -251,6 +295,26 @@ def _edge_step(names: list[str], e: Edge) -> dict:
             "bound": e.bound,
             "source": "anchor",
             "anchor_time": e.label,
+            "relation": relation,
+        }
+    if e.kind == "clock":
+        # 记录等式边：时钟节点 -> 事件 权 m（t(事件) ≤ 本地分钟+偏移）与
+        # 事件 -> 时钟节点 权 -m（t(事件) ≥ 本地分钟+偏移），二者合为等式
+        src_u = _clock_source(names[e.u])
+        if src_u is not None:
+            relation = f"{names[e.v]}真实分钟 ≤ {src_u}本地 {e.bound} + 偏移"
+        else:
+            src_v = _clock_source(names[e.v])
+            relation = f"{names[e.u]}真实分钟 ≥ {src_v}本地 {e.bound} + 偏移"
+        return {
+            "from": _display_name(names[e.u]),
+            "to": _display_name(names[e.v]),
+            "weight": e.w,
+            "line": e.line,
+            "kind": e.kind,
+            "kind_label": "记录等式",
+            "bound": e.bound,
+            "source": "clock",
             "relation": relation,
         }
     if e.kind == "upper":
@@ -2291,4 +2355,196 @@ def solve_max_gap(text: str, order_text: str) -> dict:
         "gaps": gaps_of(timeline),
         "differences": differences_of(dist),
         **meta,
+    }
+
+
+# ---------- 记录时钟对齐 ----------
+
+def parse_clock_records(text: str) -> tuple[list[ClockRecord], list[dict]]:
+    """按行解析时钟记录：来源,事件,本地分钟（本地分钟为整数，可负）。
+
+    返回 (有效记录, 错误列表)；空行跳过但行号保留为记录文本的原始行号。
+    首个非空行的来源即参考时钟（偏移固定为 0），参考来源的判定在 solve_clock_alignment 中。
+    """
+    errors: list[dict] = []
+    records: list[ClockRecord] = []
+
+    if not text or not text.strip():
+        return records, [{"line": None, "message": "时钟记录输入为空：请逐行粘贴“来源,事件,本地分钟”（首个来源为参考时钟）。"}]
+
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            continue  # 空行不计入校验，但行号保留为记录文本的原始行号
+
+        # 兼容中文逗号
+        parts = [p.strip() for p in line.replace("，", ",").split(",")]
+        if len(parts) != 3:
+            errors.append({
+                "line": line_no,
+                "message": f"时钟记录第{line_no}行：应为 3 个字段（来源,事件,本地分钟），实际得到 {len(parts)} 个。",
+            })
+            continue
+
+        source, event, local_s = parts
+        row_errors: list[str] = []
+        if not source:
+            row_errors.append("来源为空")
+        if not event:
+            row_errors.append("事件为空")
+        if not _INT_RE.match(local_s):
+            row_errors.append(f"本地分钟必须是整数分钟，得到 “{local_s}”")
+        if row_errors:
+            errors.append({"line": line_no, "message": f"时钟记录第{line_no}行：" + "；".join(row_errors) + "。"})
+            continue
+
+        records.append(ClockRecord(line_no, source, event, int(local_s)))
+
+    return records, errors
+
+
+def solve_clock_alignment(text: str, records_text: str) -> dict:
+    """记录时钟对齐：区间约束与多来源本地时钟记录等式联立。
+
+    逐行记录“来源,事件,本地分钟”：首个出现的来源为参考时钟，其偏移固定为 0；
+    同一来源的全部记录共用一个整数分钟偏移 o(来源)，每条记录是等式
+    t(事件) = 本地分钟 + o(来源)，写成一对等式边（时钟节点 -> 事件 权 m、
+    事件 -> 时钟节点 权 -m），与区间行复用同一套差分约束 Bellman-Ford 联立。
+    时钟节点为带内部前缀的独立节点，即使来源与事件同名也不混淆。偏移只以差值形式
+    出现，故无需为参考时钟额外钉零即可检出全部负环。
+
+    矛盾时返回的闭合冲突链同时含区间行号、记录行号与所用界值（本地分钟）。
+    可解时以参考时钟节点为源跑前/反向单源最短路：某来源相对参考时钟的最紧偏移
+    上界 = 参考时钟 -> 该时钟 的最短路，最紧偏移下界 = -(该时钟 -> 参考时钟 最短路)；
+    两端都有界（与参考来源连通）才给偏移——两界相等为精确点，否则为范围；
+    未连通来源标为“未定位”，不显示伪精确偏移。事件真实分钟范围与逐条记录核对同法给出。
+    """
+    errors: list[dict] = []
+    rows: list[Row] = []
+    if text and text.strip():
+        rows, errors = parse_text(text)  # 区间文本允许留空：纯记录对齐模式
+    records, record_errors = parse_clock_records(records_text)
+    errors = errors + record_errors
+    if errors:
+        return {"status": "error", "errors": errors}
+    if not records:
+        # parse_clock_records 对空文本已报错，正常不会走到；防御性返回
+        return {"status": "error", "errors": [{"line": None, "message": "没有可联立的区间约束或时钟记录。"}]}
+
+    reference = records[0].source  # 首个非空记录的来源为参考时钟，偏移固定为 0
+
+    # 区间事件节点 + 每个来源一个时钟偏移节点 + 记录中独有的事件节点
+    names, index, edges = _build_graph(rows)
+    for r in records:
+        clock = _clock_node(r.source)
+        if clock not in index:
+            index[clock] = len(names)
+            names.append(clock)
+        if r.event not in index:
+            index[r.event] = len(names)
+            names.append(r.event)
+    for r in records:
+        ic = index[_clock_node(r.source)]
+        ie = index[r.event]
+        # t(事件) − o(来源) ≤ m 与 ≥ m：等式边一对，界值取本地分钟，行号为记录原始行号
+        edges.append(Edge(ic, ie, r.local, r.line, "clock", r.local, "clock"))
+        edges.append(Edge(ie, ic, -r.local, r.line, "clock", r.local, "clock"))
+
+    dist, pred, last_relaxed = _relax_all(names, edges)
+    if last_relaxed is not None:
+        return _conflict_result(names, pred, last_relaxed, len(names))
+
+    # 以参考时钟为源：上界 = ref -> x 最短路；反向图上从 ref 跑最短路得 x -> ref 距离，
+    # 其负值为 x 相对参考时钟的最紧下界。
+    iref = index[_clock_node(reference)]
+    upper_dist, _ = _bellman_ford(names, edges, iref)
+    rev_edges = [Edge(e.v, e.u, e.w, e.line, e.kind, e.bound, e.source, e.label) for e in edges]
+    lower_dist, _ = _bellman_ford(names, rev_edges, iref)
+
+    def _bounds(i: int) -> tuple[int | None, int | None]:
+        """节点 i 相对参考时钟的最紧 (下界, 上界)；任一端不可达即为 None。"""
+        ub, lb = upper_dist[i], lower_dist[i]
+        if ub is None or lb is None:
+            return None, None
+        return -lb, ub
+
+    # 来源（时钟节点）：按来源首次出现顺序；参考来源恒为精确 0
+    source_order: list[str] = []
+    for r in records:
+        if r.source not in source_order:
+            source_order.append(r.source)
+    sources: list[dict] = []
+    for source in source_order:
+        i = index[_clock_node(source)]
+        lo, hi = _bounds(i)
+        is_ref = source == reference
+        located = is_ref or lo is not None
+        sources.append({
+            "source": source,
+            "reference": is_ref,
+            "located": located,
+            "offset_low": 0 if is_ref else lo,
+            "offset_high": 0 if is_ref else hi,
+            "exact": is_ref or (located and lo == hi),
+            "record_count": sum(1 for r in records if r.source == source),
+        })
+
+    # 事件（非时钟节点）：按事件首次出现顺序（先区间行、再记录行），给出真实分钟最紧范围
+    event_order: list[str] = []
+    for r in rows:
+        for name in (r.a, r.b):
+            if name not in event_order:
+                event_order.append(name)
+    for r in records:
+        if r.event not in event_order:
+            event_order.append(r.event)
+    event_bounds: dict[str, tuple[int | None, int | None]] = {}
+    events: list[dict] = []
+    for name in event_order:
+        lo, hi = _bounds(index[name])
+        event_bounds[name] = (lo, hi)
+        events.append({
+            "event": name,
+            "located": lo is not None,
+            "minute_low": lo,
+            "minute_high": hi,
+            "exact": lo is not None and lo == hi,
+        })
+
+    # 逐条记录核对：本地分钟 + 该来源偏移范围推出的事件真实分钟范围
+    clock_index_by_src = {s["source"]: s for s in sources}
+    record_checks: list[dict] = []
+    for r in records:
+        src = clock_index_by_src[r.source]
+        ev_lo, ev_hi = event_bounds[r.event]
+        if src["located"]:
+            implied_low = r.local + src["offset_low"]
+            implied_high = r.local + src["offset_high"]
+        else:
+            implied_low = implied_high = None
+        record_checks.append({
+            "line": r.line,
+            "source": r.source,
+            "event": r.event,
+            "local": r.local,
+            "reference": src["reference"],
+            "located": src["located"],
+            "implied_low": implied_low,
+            "implied_high": implied_high,
+            "event_low": ev_lo,
+            "event_high": ev_hi,
+        })
+
+    located_count = sum(1 for s in sources if s["located"])
+    return {
+        "status": "ok",
+        "reference": reference,
+        "sources": sources,
+        "events": events,
+        "records": record_checks,
+        "source_count": len(sources),
+        "located_count": located_count,
+        "record_count": len(records),
+        "interval_line_count": len(rows),
+        "event_count": len(events),
     }
