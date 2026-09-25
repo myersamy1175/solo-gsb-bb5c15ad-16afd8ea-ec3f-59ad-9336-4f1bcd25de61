@@ -137,6 +137,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tag.lower { background: #f3e8f2; color: #7a3570; }
 .tag.anchor { background: #e3f2ef; color: #1f6f5f; }
 
+/* 记录时钟对齐：时钟记录等式边 */
+.tag.clock { background: #f3ece0; color: #8a5a2b; }
+
 /* 绝对时间锚定：事件定位状态 */
 .tag.exact { background: var(--ok-bg); color: var(--ok); }
 .tag.range { background: #e6eef9; color: #2b5d8a; }

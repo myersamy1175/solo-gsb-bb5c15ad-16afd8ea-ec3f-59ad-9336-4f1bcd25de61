@@ -140,6 +140,27 @@ const EXAMPLE_MAXGAP_CONFLICT_TEXT = [
 ].join("\n");
 const EXAMPLE_MAXGAP_CONFLICT_ORDER = ["开会", "起床"].join("\n");
 
+// 记录时钟对齐——可行示例：沿用首页区间（起床,洗漱,10,30）。
+// 老张为参考时钟（偏移 0，起床真实 360）；老李两条记录钉出偏移 −20（起床 380、开会 540
+// ⇒ 开会真实 520）；老王只记洗漱 390，与区间 洗漱∈[370,390] 联立得偏移 [−20,0]（范围）；
+// 老赵记录的“串门”与参考来源没有任何约束连通，标为“未定位”。
+const EXAMPLE_CLOCK_OK_RECORDS = [
+  "老张,起床,360",
+  "老李,起床,380",
+  "老李,开会,540",
+  "老王,洗漱,390",
+  "老赵,串门,120",
+].join("\n");
+
+// 记录时钟对齐——冲突示例：老张为参考时钟（起床真实 360）；老李起床读数 380（偏移 −20）、
+// 洗漱读数 405（洗漱真实 385），但区间要求洗漱最多比起床晚 20 分钟（洗漱 ≤ 380），
+// 记录等式与区间闭合：380 + 20 − 405 = −5 < 0，构成闭合冲突链。
+const EXAMPLE_CLOCK_CONFLICT_RECORDS = [
+  "老张,起床,360",
+  "老李,起床,380",
+  "老李,洗漱,405",
+].join("\n");
+
 const $ = (id) => document.getElementById(id);
 const resultEl = $("result");
 const redundancyEl = $("redundancy-result");
@@ -164,6 +185,8 @@ const itineraryOrderEl = $("itinerary-order");
 const itineraryEl = $("itinerary-result");
 const maxgapOrderEl = $("maxgap-order");
 const maxgapEl = $("maxgap-result");
+const clockRecordsEl = $("clock-records");
+const clockEl = $("clock-result");
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -236,12 +259,14 @@ function renderOk(data) {
     </div>`;
 }
 
-// 矛盾链/推导路径步骤的行号引用：区间行显示“第 N 行”，锚点行显示“锚点第 N 行”
+// 矛盾链/推导路径步骤的行号引用：区间行显示“第 N 行”，锚点行显示“锚点第 N 行”，时钟记录行显示“记录第 N 行”
 function stepLineRef(s) {
-  return s.source === "anchor" ? `锚点第 ${s.line} 行` : `第 ${s.line} 行`;
+  if (s.source === "anchor") return `锚点第 ${s.line} 行`;
+  if (s.source === "clock") return `记录第 ${s.line} 行`;
+  return `第 ${s.line} 行`;
 }
 
-// 步骤的界值显示：锚点边显示日期时刻文本，区间边显示分钟界值
+// 步骤的界值显示：锚点边显示日期时刻文本，区间/时钟边显示分钟界值
 function stepBoundText(s) {
   return s.kind === "anchor" ? (s.anchor_time || String(s.bound)) : String(s.bound);
 }
@@ -742,6 +767,7 @@ $("btn-clear").addEventListener("click", () => {
   aliasEl.innerHTML = "";
   itineraryEl.innerHTML = "";
   maxgapEl.innerHTML = "";
+  clockEl.innerHTML = "";
   refreshLineOptions();
   inputEl.focus();
 });
@@ -756,6 +782,7 @@ inputEl.addEventListener("input", () => {
   aliasEl.innerHTML = "";       // 区间已变，旧的别名归并结论作废
   itineraryEl.innerHTML = "";   // 区间已变，旧的行程可达性结论作废
   maxgapEl.innerHTML = "";      // 区间已变，旧的最大统一间隔结论作废
+  clockEl.innerHTML = "";       // 区间已变，旧的时钟对齐结论作废
 });
 refreshLineOptions();
 
@@ -1965,4 +1992,158 @@ $("btn-maxgap-clear").addEventListener("click", () => {
 });
 maxgapOrderEl.addEventListener("input", () => {
   maxgapEl.innerHTML = "";  // 顺序已变，旧的最大统一间隔结论作废
+});
+
+// ---------- 记录时钟对齐 ----------
+
+// 各来源相对参考时钟的最紧偏移上下界（未定位来源不给样例值，不显示伪精确偏移）
+function renderClockOk(data) {
+  const sourceRows = data.sources.map((s) => {
+    if (!s.located) {
+      return `<tr class="combo-conflict">
+        <td class="num">记录第 ${s.first_line} 行</td>
+        <td>${esc(s.source)}</td>
+        <td><span class="tag unlocated">未定位</span></td>
+        <td colspan="4">与参考来源“${esc(data.reference)}”没有任何约束连通，偏移无界，不显示伪精确值</td>
+      </tr>`;
+    }
+    const status = s.reference
+      ? '<span class="tag exact">参考时钟</span>'
+      : (s.exact
+        ? '<span class="tag exact">精确偏移</span>'
+        : `<span class="tag range">范围（${s.offset_high - s.offset_low} 分钟）</span>`);
+    const bounds = s.exact
+      ? String(s.offset_low)
+      : `[${s.offset_low}, ${s.offset_high}]`;
+    return `<tr>
+      <td class="num">记录第 ${s.first_line} 行</td>
+      <td>${esc(s.source)}</td>
+      <td>${status}</td>
+      <td class="num">${bounds}</td>
+      <td class="num">${s.sample_offset}</td>
+      <td class="num">${s.record_count}</td>
+    </tr>`;
+  }).join("");
+
+  const eventRows = data.events.map((e) => {
+    if (!e.located) {
+      return `<tr class="combo-conflict">
+        <td>${esc(e.event)}</td>
+        <td><span class="tag unlocated">未定位</span></td>
+        <td colspan="3">${esc(e.sources.join("、"))} 的时钟与参考来源不连通</td>
+      </tr>`;
+    }
+    const status = e.exact
+      ? '<span class="tag exact">精确</span>'
+      : `<span class="tag range">范围（${e.minute_high - e.minute_low} 分钟）</span>`;
+    const bounds = e.exact ? String(e.minute_low) : `[${e.minute_low}, ${e.minute_high}]`;
+    return `<tr>
+      <td>${esc(e.event)}</td>
+      <td>${status}</td>
+      <td class="num">${bounds}</td>
+      <td class="num">${e.sample_minute}</td>
+      <td>${esc(e.sources.join("、"))}</td>
+    </tr>`;
+  }).join("");
+
+  const recordRows = data.record_checks.map((r) => {
+    const trueCell = r.sample_true === null
+      ? '<td colspan="3" class="muted">来源未定位，无样例取值</td>'
+      : `<td class="num">${r.local} ${r.sample_offset >= 0 ? "+" : "−"} ${Math.abs(r.sample_offset)} = ${r.sample_true}</td>
+         <td class="num">${r.sample_offset}</td>
+         <td class="num">${r.sample_true}</td>`;
+    return `<tr${r.sample_true === null ? ' class="combo-conflict"' : ""}>
+      <td class="num">记录第 ${r.line} 行</td>
+      <td>${r.reference ? '<span class="tag exact">参考</span> ' : ""}${esc(r.source)}</td>
+      <td>${esc(r.event)}</td>
+      <td class="num">${r.local}</td>
+      ${trueCell}
+    </tr>`;
+  }).join("");
+
+  const unlocatedNote = data.unlocated_source_count
+    ? `<strong>${data.unlocated_source_count}</strong> 个来源与参考来源互不连通，标为“未定位”，
+       只显示最紧界、不显示任何样例偏移以免把任意平移误认为真实偏移。`
+    : "全部来源都与参考时钟连通。";
+
+  clockEl.innerHTML = `
+    <div class="banner ok">
+      <h2>✓ 时钟对齐求解完成</h2>
+      <p>参考时钟为 <strong>${esc(data.reference)}</strong>（首个来源，偏移固定 0）：
+      共 ${data.source_count} 个来源、${data.record_count} 条记录、${data.line_count} 条区间约束；
+      <strong>${data.located_source_count}</strong> 个来源已定位，${unlocatedNote}
+      以下偏移均为各来源时钟<strong>相对参考时钟</strong>的整数分钟（正数表示该时钟比参考时钟慢、需加正偏移）。</p>
+    </div>
+    <div class="card">
+      <h3>各来源时钟偏移（相对参考时钟的最紧上下界）</h3>
+      <table>
+        <thead><tr>
+          <th class="num">首次出现</th><th>来源</th><th>状态</th>
+          <th class="num">最紧偏移界（分钟）</th><th class="num">样例取值</th><th class="num">记录数</th>
+        </tr></thead>
+        <tbody>${sourceRows}</tbody>
+      </table>
+      <p class="muted">偏移 o 满足“事件真实分钟 = 本地分钟 + o”；最紧界由全部记录等式与区间共同推出，
+      两界相等即该来源时钟与参考时钟的差被完全钉死；样例取值只是把参考时钟归零后落在某个紧界上的可行值，并非唯一真值。</p>
+    </div>
+    <div class="card">
+      <h3>事件真实分钟（相对参考时钟的最紧上下界）</h3>
+      <table>
+        <thead><tr>
+          <th>事件</th><th>状态</th><th class="num">最紧真实分钟界</th><th class="num">样例取值</th><th>记录来源</th>
+        </tr></thead>
+        <tbody>${eventRows}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>逐记录对齐核对（本地分钟 + 来源偏移 = 真实分钟）</h3>
+      <table>
+        <thead><tr>
+          <th class="num">行号</th><th>来源</th><th>事件</th><th class="num">本地分钟</th>
+          <th class="num">样例等式</th><th class="num">样例偏移</th><th class="num">样例真实分钟</th>
+        </tr></thead>
+        <tbody>${recordRows}</tbody>
+      </table>
+      <p class="muted">同一来源的全部记录共用同一个偏移；未定位来源的记录不给样例取值。</p>
+    </div>`;
+}
+
+async function solveClockAlign() {
+  clockEl.innerHTML = `<div class="card muted">时钟对齐联立中…</div>`;
+  try {
+    const resp = await fetch("/api/clock-align", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: inputEl.value, records: clockRecordsEl.value }),
+    });
+    const data = await resp.json();
+    if (data.status === "ok") renderClockOk(data);
+    else if (data.status === "conflict") renderConflict(data, clockEl);
+    else renderErrors(data.errors || [{ line: null, message: "未知错误。" }], clockEl);
+  } catch (err) {
+    clockEl.innerHTML = `
+      <div class="banner err"><h2>请求失败</h2><p>${esc(err.message)}</p></div>`;
+  }
+}
+
+$("btn-clock").addEventListener("click", solveClockAlign);
+$("btn-clock-example-ok").addEventListener("click", () => {
+  inputEl.value = "起床,洗漱,10,30";  // 配套区间
+  clockRecordsEl.value = EXAMPLE_CLOCK_OK_RECORDS;
+  refreshLineOptions();
+  solveClockAlign();
+});
+$("btn-clock-example-conflict").addEventListener("click", () => {
+  inputEl.value = "起床,洗漱,10,20";  // 配套区间（洗漱最多晚 20 分钟）
+  clockRecordsEl.value = EXAMPLE_CLOCK_CONFLICT_RECORDS;
+  refreshLineOptions();
+  solveClockAlign();
+});
+$("btn-clock-clear").addEventListener("click", () => {
+  clockRecordsEl.value = "";
+  clockEl.innerHTML = "";
+  clockRecordsEl.focus();
+});
+clockRecordsEl.addEventListener("input", () => {
+  clockEl.innerHTML = "";  // 记录已变，旧的时钟对齐结论作废
 });
